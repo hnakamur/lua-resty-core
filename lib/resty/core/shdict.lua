@@ -5,6 +5,7 @@ local ffi = require 'ffi'
 local base = require "resty.core.base"
 
 local ffi_new = ffi.new
+local ffi_cast = ffi.cast
 local ffi_str = ffi.string
 local C = ffi.C
 local get_string_buf = base.get_string_buf
@@ -36,8 +37,24 @@ ffi.cdef[[
         int *forcible);
 
     int ngx_http_lua_ffi_shdict_flush_all(void *zone);
+
+    int ngx_http_lua_ffi_shdict_get_stats_slot_count(void *zone,
+        size_t *slot_count);
+
+    int ngx_http_lua_ffi_shdict_get_stats_slots_and_min_size(void *zone,
+        size_t slot_count, void *stats, size_t *slot_min_size);
+
+    typedef struct {
+        uintptr_t        total;
+        uintptr_t        used;
+
+        uintptr_t        reqs;
+        uintptr_t        fails;
+    } ngx_slab_stat_t;
 ]]
 
+local slab_stat_t_ptr_type = ffi.typeof("ngx_slab_stat_t*")
+local slab_stat_t_size = ffi.sizeof("ngx_slab_stat_t")
 
 if not pcall(function () return C.free end) then
     ffi.cdef[[
@@ -52,6 +69,8 @@ local num_value = ffi_new("double[1]")
 local is_stale = ffi_new("int[1]")
 local forcible = ffi_new("int[1]")
 local str_value_buf = ffi_new("unsigned char *[1]")
+local slot_count_buf = ffi_new("size_t[1]")
+local slot_min_size_buf = ffi_new("size_t[1]")
 local errmsg = base.get_errmsg_ptr()
 
 
@@ -387,6 +406,35 @@ local function shdict_flush_all(zone)
 end
 
 
+local function shdict_stats(zone, slots)
+    zone = check_zone(zone)
+
+    C.ngx_http_lua_ffi_shdict_get_stats_slot_count(zone, slot_count_buf)
+    local slot_count = tonumber(slot_count_buf[0])
+    local raw_stats_buf = get_string_buf(slot_count * slab_stat_t_size)
+    local stats_buf = ffi_cast(slab_stat_t_ptr_type, raw_stats_buf)
+    C.ngx_http_lua_ffi_shdict_get_stats_slots_and_min_size(zone, slot_count_buf[0], stats_buf, slot_min_size_buf)
+    local slot_size = tonumber(slot_min_size_buf[0])
+    if slots then
+        slots.count = slot_count
+    end
+    local total_used = 0
+    for i = 1, slot_count do
+        local stat = stats_buf[i - 1]
+        if slots then
+            slots[i .. '.size'] = slot_size
+            slots[i .. '.total'] = tonumber(stat.total)
+            slots[i .. '.used'] = tonumber(stat.used)
+            slots[i .. '.reqs'] = tonumber(stat.reqs)
+            slots[i .. '.fails'] = tonumber(stat.fails)
+        end
+        total_used = total_used + slot_size * tonumber(stat.used)
+        slot_size = slot_size * 2
+    end
+    return total_used
+end
+
+
 if ngx_shared then
     local _, dict = next(ngx_shared, nil)
     if dict then
@@ -404,6 +452,7 @@ if ngx_shared then
                 mt.replace = shdict_replace
                 mt.delete = shdict_delete
                 mt.flush_all = shdict_flush_all
+                mt.stats = shdict_stats
             end
         end
     end

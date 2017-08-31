@@ -999,3 +999,67 @@ number expected, got string
 --- no_error_log
 [alert]
 [crit]
+
+
+
+=== TEST 31: get total used memory
+--- http_config eval: $::HttpConfig
+--- config
+    location = /t {
+        content_by_lua_block {
+            local ffi = require "ffi"
+            local dogs = ngx.shared.dogs
+            local total_used_bytes = dogs:stats()
+            ngx.say("total_used_bytes type: ", type(total_used_bytes))
+        }
+    }
+--- request
+GET /t
+--- response_body
+total_used_bytes type: number
+--- no_error_log
+[error]
+[alert]
+[crit]
+
+
+
+=== TEST 32: get detailed stats
+--- http_config eval: $::HttpConfig
+--- config
+    location = /t {
+        content_by_lua_block {
+            local ffi = require "ffi"
+            local dogs = ngx.shared.dogs
+            local slots = {}
+            local total_used_bytes = dogs:stats(slots)
+            ngx.say("total_used_bytes type: ", type(total_used_bytes))
+            ngx.say("slots.count type: ", type(slots.count))
+            for i = 1, slots.count do
+                if type(slots[i .. ".size"]) ~= "number" then
+                    ngx.say("slots['" .. i .. ".size'] type: ", type(slots[i .. ".size"]))
+                end
+                if type(slots[i .. ".total"]) ~= "number" then
+                    ngx.say("slots['" .. i .. ".total'] type: ", type(slots[i .. ".total"]))
+                end
+                if type(slots[i .. ".used"]) ~= "number" then
+                    ngx.say("slots['" .. i .. ".used'] type: ", type(slots[i .. ".used"]))
+                end
+                if type(slots[i .. ".reqs"]) ~= "number" then
+                    ngx.say("slots['" .. i .. ".reqs'] type: ", type(slots[i .. ".reqs"]))
+                end
+                if type(slots[i .. ".fails"]) ~= "number" then
+                    ngx.say("slots['" .. i .. ".fails'] type: ", type(slots[i .. ".fails"]))
+                end
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+total_used_bytes type: number
+slots.count type: number
+--- no_error_log
+[error]
+[alert]
+[crit]
